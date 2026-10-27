@@ -11,10 +11,15 @@ import subprocess
 import argparse
 import json
 import re
-import pwd
-import grp
+import platform
 from datetime import datetime
 from threading import Lock
+
+try:
+    import colorama
+    colorama.init(autoreset=False)
+except ImportError:
+    pass
 
 C = {
     "R": "\033[91m",
