@@ -88,7 +88,7 @@ python3 ghost-privesc.py --completo --output relatorio.json
   [INFO   ] Hostname  : ubuntu-victim
   [INFO   ] Kernel    : 5.8.0-53-generic
   [INFO   ] OS        : Ubuntu 20.04.3 LTS
-  [CRITICO] Usuario no grupo 'docker' — escape de container possivel
+  [CRITICO] Usuario no grupo 'docker' - escape de container possivel
 
   [=] KERNEL / CVEs CONHECIDOS
   [CRITICO] Kernel 5.8.0-53-generic pode ser vulneravel: DirtyPipe (CVE-2022-0847)
