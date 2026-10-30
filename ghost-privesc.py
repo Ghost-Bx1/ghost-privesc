@@ -90,7 +90,7 @@ def _build_banner():
 
     info = [
         f"{G}{N}GHOST-PRIVESC{X}",
-        f"{Cy}v2.1.0  {D}Linux & Windows PrivEsc Checker{X}",
+        f"{Cy}v2.2.0  {D}Linux & Windows PrivEsc Checker{X}",
         f"{D}{hl}{X}",
         f"{W}By Gh0st-Bx1  {D}{bar}  github.com/Ghost-Bx1{X}",
         f"{D}{hl}{X}",
@@ -1408,6 +1408,249 @@ def sugerir_exploits():
 
 
 # ─────────────────────────────────────────────────────────────────
+# TOKEN IMPERSONATION / POTATO ATTACKS (Windows)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_token_privs():
+    """Verifica SeImpersonatePrivilege e sugere ataques Potato."""
+    _p("TITULO", "TOKEN IMPERSONATION / POTATO ATTACKS")
+    if sys.platform != "win32":
+        _p("INFO", "Token impersonation e especifico para Windows")
+        return
+
+    out, _ = _run("whoami /priv")
+    if not out:
+        _p("ERRO", "Nao foi possivel obter privilegios (whoami /priv)")
+        return
+
+    privs_criticos = {
+        "SeImpersonatePrivilege": "PrintSpoofer, GodPotato, JuicyPotato, RoguePotato",
+        "SeAssignPrimaryTokenPrivilege": "CreateProcessAsUser com token clonado",
+        "SeDebugPrivilege": "Dump de LSASS / injecao em processos privilegiados",
+        "SeTakeOwnershipPrivilege": "Tomar posse de arquivos SYSTEM",
+        "SeRestorePrivilege": "Escrever em qualquer arquivo (DLL hijack)",
+        "SeBackupPrivilege": "Ler qualquer arquivo (SAM/SYSTEM dump)",
+        "SeLoadDriverPrivilege": "Carregar driver malicioso no kernel",
+        "SeCreateSymbolicLinkPrivilege": "Symbolic link attacks (NTFS junctions)",
+        "SeManageVolumePrivilege": "Escrever em volumes diretos (volume write)",
+    }
+
+    encontrados = []
+    for priv, ataque in privs_criticos.items():
+        if priv.lower() in out.lower() and "enabled" in out.lower():
+            linha = [l for l in out.splitlines() if priv.lower() in l.lower()]
+            if linha and "enabled" in linha[0].lower():
+                encontrados.append((priv, ataque))
+                _p("CRITICO", f"{priv} HABILITADO", f"Ataque: {ataque}")
+        elif priv.lower() in out.lower():
+            _p("MEDIO", f"{priv} presente (disabled)", "Pode ser ativado em contexto adequado")
+
+    if not encontrados:
+        _p("INFO", "Nenhum privilegio critico habilitado detectado")
+    else:
+        _p("ALERTA", "Sugestao de ferramentas Potato:")
+        _p("INFO", "GodPotato:    https://github.com/BeichenDream/GodPotato")
+        _p("INFO", "PrintSpoofer: https://github.com/itm4n/PrintSpoofer")
+        _p("INFO", "JuicyPotato:  https://github.com/ohpe/juicy-potato (Windows < 2019)")
+        _p("INFO", "RoguePotato:  https://github.com/antonioCoco/RoguePotato")
+        _p("INFO", "Uso rapido:   GodPotato.exe -cmd \"cmd /c whoami\"")
+
+
+# ─────────────────────────────────────────────────────────────────
+# DLL HIJACKING (Windows)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_dll_hijacking():
+    """Busca DLLs ausentes em servicos e diretorios gravieis no PATH."""
+    _p("TITULO", "DLL HIJACKING")
+    if sys.platform != "win32":
+        _p("INFO", "DLL hijacking e especifico para Windows")
+        return
+
+    import os
+
+    # Verifica PATH por diretorios gravieis
+    path_env = os.environ.get("PATH", "")
+    dirs_path = [d.strip() for d in path_env.split(";") if d.strip()]
+    gravieis_path = []
+    for d in dirs_path:
+        if os.path.isdir(d):
+            try:
+                teste = os.path.join(d, "_ghost_teste_escrita_.tmp")
+                with open(teste, "w") as f:
+                    f.write("test")
+                os.remove(teste)
+                gravieis_path.append(d)
+                _p("CRITICO", f"Diretorio gravivel no PATH: {d}",
+                   "Coloque DLL maliciosa aqui para sequestro")
+            except Exception:
+                pass
+
+    if not gravieis_path:
+        _p("OK", "Nenhum diretorio gravivel encontrado no PATH do usuario")
+
+    # Diretorios classicos de DLL hijack em servicos
+    alvos_classicos = [
+        r"C:\Windows\Temp",
+        r"C:\Temp",
+        r"C:\ProgramData",
+        os.path.expandvars(r"%APPDATA%"),
+    ]
+    for d in alvos_classicos:
+        if os.path.isdir(d):
+            try:
+                teste = os.path.join(d, "_ghost_teste_.tmp")
+                with open(teste, "w") as f:
+                    f.write("t")
+                os.remove(teste)
+                _p("MEDIO", f"Diretorio gravivel pelo usuario: {d}",
+                   "Verifique se algum servico carrega DLLs daqui")
+            except Exception:
+                pass
+
+    # Chaves de registro com ImagePath gravieis
+    out, _ = _run("sc query type= all state= all 2>nul")
+    if out:
+        _p("INFO", "Use 'sc qc SERVICO' para verificar BinaryPathName de cada servico")
+        _p("INFO", "Ferramentas: https://github.com/itm4n/PrivescCheck (PrivescCheck.ps1)")
+
+
+# ─────────────────────────────────────────────────────────────────
+# SCHEDULED TASKS com binarios gravieis (Windows)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_schtasks_gravieis():
+    """Lista tarefas agendadas cujos executaveis sao gravieis pelo usuario."""
+    _p("TITULO", "SCHEDULED TASKS - BINARIOS GRAVIEIS")
+    if sys.platform != "win32":
+        _p("INFO", "Modulo especifico para Windows")
+        return
+
+    out, _ = _run("schtasks /query /fo CSV /v 2>nul")
+    if not out:
+        _p("INFO", "Nao foi possivel listar tarefas agendadas")
+        return
+
+    encontrados = 0
+    linhas = out.splitlines()
+    for linha in linhas:
+        if "Run As User" in linha and "SYSTEM" in linha.upper():
+            # Proximo campo com caminho de executavel
+            pass
+        if linha.startswith('"') and (".exe" in linha.lower() or ".bat" in linha.lower() or ".ps1" in linha.lower()):
+            partes = [p.strip('"') for p in linha.split('","')]
+            for parte in partes:
+                if os.path.isfile(parte):
+                    try:
+                        with open(parte, "ab") as _:
+                            pass
+                        _p("CRITICO", f"Executavel de tarefa gravivel: {parte}",
+                           "Substituir por payload para execucao como SYSTEM")
+                        encontrados += 1
+                    except Exception:
+                        pass
+
+    if not encontrados:
+        _p("INFO", "Nenhum executavel gravivel em tarefas agendadas detectado automaticamente")
+    _p("INFO", "Verificacao manual: schtasks /query /fo LIST /v | findstr /i \"task to run run as\"")
+
+
+# ─────────────────────────────────────────────────────────────────
+# REGISTRY AUTORUNS (Windows)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_autoruns_registro():
+    """Verifica chaves Run/RunOnce do registro com valores gravieis."""
+    _p("TITULO", "REGISTRY AUTORUNS")
+    if sys.platform != "win32":
+        _p("INFO", "Modulo especifico para Windows")
+        return
+
+    chaves_run = [
+        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+        r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+        r"HKLM\SYSTEM\CurrentControlSet\Services",
+    ]
+
+    for chave in chaves_run:
+        out, _ = _run(f"reg query \"{chave}\" 2>nul")
+        if not out:
+            continue
+        for linha in out.splitlines():
+            linha = linha.strip()
+            if not linha or linha.startswith("HKEY"):
+                continue
+            # Extrai caminho do executavel
+            partes = linha.split()
+            if len(partes) >= 3:
+                valor = " ".join(partes[2:]).strip('"').split(" ")[0].strip('"')
+                if os.path.isfile(valor):
+                    try:
+                        with open(valor, "ab") as _:
+                            pass
+                        _p("CRITICO", f"Autorun gravivel: {valor}",
+                           f"Chave: {chave} | Substituir por payload")
+                    except Exception:
+                        _p("INFO", f"Autorun encontrado (sem escrita): {valor}")
+                elif valor and ("exe" in valor.lower() or "dll" in valor.lower()):
+                    _p("MEDIO", f"Autorun aponta para arquivo nao encontrado: {valor}",
+                       "Possivel DLL/EXE planting")
+
+    _p("INFO", "Ferramenta completa: Autoruns.exe (Sysinternals) ou PrivescCheck.ps1")
+
+
+# ─────────────────────────────────────────────────────────────────
+# DPAPI HINTS (Windows)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_dpapi():
+    """Exibe locais de arquivos DPAPI e hints de extracao de credenciais."""
+    _p("TITULO", "DPAPI - CREDENTIAL FILES")
+    if sys.platform != "win32":
+        _p("INFO", "DPAPI e especifico para Windows")
+        return
+
+    import os
+
+    appdata = os.environ.get("APPDATA", "")
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    userprofile = os.environ.get("USERPROFILE", "")
+
+    locais = {
+        "Master Keys (usuario)": os.path.join(appdata, r"Microsoft\Protect"),
+        "Master Keys (sistema)": r"C:\Windows\System32\Microsoft\Protect",
+        "Credentials (usuario)": os.path.join(localappdata, r"Microsoft\Credentials"),
+        "Credentials (roaming)": os.path.join(appdata, r"Microsoft\Credentials"),
+        "Vault (usuario)": os.path.join(localappdata, r"Microsoft\Vault"),
+        "Vault (sistema)": r"C:\Windows\System32\config\systemprofile\AppData\Local\Microsoft\Vault",
+        "Chrome Login Data": os.path.join(localappdata, r"Google\Chrome\User Data\Default\Login Data"),
+        "Edge Login Data": os.path.join(localappdata, r"Microsoft\Edge\User Data\Default\Login Data"),
+        "WiFi profiles": r"C:\ProgramData\Microsoft\Wlansvc\Profiles\Interfaces",
+        "RDP saved creds": os.path.join(appdata, r"Microsoft\Windows\INetCache"),
+    }
+
+    encontrados = []
+    for nome, caminho in locais.items():
+        existe = os.path.exists(caminho)
+        nivel = "CRITICO" if existe else "INFO"
+        _p(nivel, f"{nome}: {caminho}", "EXISTE" if existe else "nao encontrado")
+        if existe:
+            encontrados.append(nome)
+
+    if encontrados:
+        _p("ALERTA", "Ferramentas de extracao DPAPI:")
+        _p("INFO", "Mimikatz:  sekurlsa::dpapi  |  dpapi::cred  |  dpapi::masterkey")
+        _p("INFO", "SharpDPAPI: https://github.com/GhostPack/SharpDPAPI")
+        _p("INFO", "DonPAPI:   https://github.com/login-securite/DonPAPI (remoto)")
+        _p("INFO", "Comando:   dpapi::cred /in:\"<credfile>\" /masterkey:<hex>")
+    else:
+        _p("INFO", "Nenhum arquivo DPAPI encontrado no perfil atual")
+
+
+# ─────────────────────────────────────────────────────────────────
 # HTML Report
 # ─────────────────────────────────────────────────────────────────
 
@@ -1540,7 +1783,7 @@ def main():
 
     p = argparse.ArgumentParser(
         prog="ghost-privesc",
-        description="Ghost-Privesc v2.0.0 — Linux & Windows Privilege Escalation Checker | By Gh0st-Bx1",
+        description="Ghost-Privesc v2.2.0 - Linux & Windows Privilege Escalation Checker | By Gh0st-Bx1",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     p.add_argument("--completo", action="store_true", help="Executar todos os modulos")
@@ -1589,6 +1832,17 @@ def main():
                    help="GPP Credentials — SYSVOL Groups.xml/Services.xml cPassword")
     p.add_argument("--ad", action="store_true",
                    help="AD local — tickets Kerberos, DCs, dominios confiaveis, credenciais cached")
+    # Novos modulos v2.2
+    p.add_argument("--token-privs", dest="token_privs", action="store_true",
+                   help="Token impersonation — SeImpersonatePrivilege + Potato attacks (Windows)")
+    p.add_argument("--dll-hijack", dest="dll_hijack", action="store_true",
+                   help="DLL hijacking — PATH gravieis + diretorios de servicos (Windows)")
+    p.add_argument("--schtasks", action="store_true",
+                   help="Scheduled tasks com executaveis gravieis (Windows)")
+    p.add_argument("--autoruns", action="store_true",
+                   help="Registry autoruns gravieis (Run/RunOnce) (Windows)")
+    p.add_argument("--dpapi", action="store_true",
+                   help="DPAPI — locais de Master Keys, Credentials, Vault (Windows)")
     p.add_argument("--output", metavar="FILE", help="Salvar relatorio em JSON")
     p.add_argument("--html", metavar="FILE", help="Salvar relatorio em HTML (dark theme)")
     args = p.parse_args()
@@ -1596,7 +1850,9 @@ def main():
     novos_flags = [args.windows, args.pkexec, args.lib_hijack, args.sudo_token,
                    args.monitor, args.dbus, args.exploits,
                    args.docker, args.k8s, args.imds, args.wsl,
-                   args.laps, args.gpp, args.ad]
+                   args.laps, args.gpp, args.ad,
+                   args.token_privs, args.dll_hijack, args.schtasks,
+                   args.autoruns, args.dpapi]
     linux_flags = [args.sistema, args.kernel, args.sudo, args.suid, args.caps,
                    args.cron, args.servicos, args.path, args.nfs, args.senhas,
                    args.containers, args.graveis, args.env, args.processos,
@@ -1607,6 +1863,16 @@ def main():
         # No Windows, so linux checks sao pulados silenciosamente
         if executar_tudo or args.windows:
             verificar_windows()
+        if executar_tudo or args.token_privs:
+            verificar_token_privs()
+        if executar_tudo or args.dll_hijack:
+            verificar_dll_hijacking()
+        if executar_tudo or args.schtasks:
+            verificar_schtasks_gravieis()
+        if executar_tudo or args.autoruns:
+            verificar_autoruns_registro()
+        if executar_tudo or args.dpapi:
+            verificar_dpapi()
     else:
         if executar_tudo or args.sistema:
             info_sistema()
@@ -1668,6 +1934,8 @@ def main():
             verificar_ad_local()
         if args.windows:
             _p("INFO", "Flag --windows ignorado em Linux")
+        if args.token_privs or args.dll_hijack or args.schtasks or args.autoruns or args.dpapi:
+            _p("INFO", "Flags Windows (--token-privs/--dll-hijack/--schtasks/--autoruns/--dpapi) ignorados em Linux")
 
     if is_windows:
         if executar_tudo or args.laps:
