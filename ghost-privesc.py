@@ -1007,6 +1007,207 @@ def verificar_windows():
 
 
 # ─────────────────────────────────────────────────────────────────
+# LAPS (Local Administrator Password Solution)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_laps():
+    """Verifica LAPS no registro, modulo PowerShell e AdmPwd.dll."""
+    _p("TITULO", "LAPS (LOCAL ADMINISTRATOR PASSWORD SOLUTION)")
+
+    if is_windows:
+        import winreg
+        # Chave de registro LAPS
+        laps_keys = [
+            r"SOFTWARE\Policies\Microsoft Services\AdmPwd",
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\GPExtensions\{D76B9641-3288-4f75-942D-087DE603E3EA}",
+        ]
+        for key_path in laps_keys:
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as k:
+                    try:
+                        val, _ = winreg.QueryValueEx(k, "AdmPwdEnabled")
+                        if val == 1:
+                            _p("ALERTA", f"LAPS habilitado via GPO: HKLM\\{key_path}",
+                               "Senhas de admin local gerenciadas pelo LAPS - verifique permissoes de leitura no AD")
+                        else:
+                            _p("INFO", f"LAPS instalado mas desabilitado: HKLM\\{key_path}")
+                    except FileNotFoundError:
+                        _p("INFO", f"Chave LAPS encontrada: HKLM\\{key_path} (sem AdmPwdEnabled)")
+            except (FileNotFoundError, OSError):
+                pass
+
+        # Procura AdmPwd.dll
+        import subprocess as _sub
+        out_dll, _ = _run('dir /s /b "C:\\Program Files\\LAPS\\AdmPwd.dll" 2>nul')
+        if out_dll and out_dll.strip():
+            _p("ALERTA", f"AdmPwd.dll encontrado: {out_dll.strip()[:120]}",
+               "LAPS instalado - verifique quem pode ler ms-Mcs-AdmPwd no AD")
+
+        # PowerShell LAPS module
+        out_ps, _ = _run('powershell -nop -c "Get-Module -ListAvailable AdmPwd.PS 2>$null | Select-Object Name,Version | ConvertTo-Json" 2>nul')
+        if out_ps and "AdmPwd" in out_ps:
+            _p("ALERTA", "Modulo PowerShell AdmPwd.PS disponivel",
+               "Get-AdmPwdPassword -ComputerName <alvo> pode expor senha LAPS se voce tiver permissao")
+        # PowerShell LAPS v2 (Windows LAPS)
+        out_wlaps, _ = _run('powershell -nop -c "Get-Module -ListAvailable LAPS 2>$null | Select-Object Name,Version | ConvertTo-Json" 2>nul')
+        if out_wlaps and "LAPS" in out_wlaps:
+            _p("ALERTA", "Windows LAPS (nativo) disponivel",
+               "Get-LapsADPassword -Identity <computador> -AsPlainText pode expor senha LAPS")
+    else:
+        # Em Linux, procura por ferramentas de leitura LAPS
+        for tool in ("laps.py", "pyLAPS.py", "getLAPSPassword"):
+            out, _ = _run(f"which {tool} 2>/dev/null")
+            if out and out.strip():
+                _p("ALERTA", f"Ferramenta LAPS encontrada: {out.strip()}", "")
+        _p("INFO", "Verificacao LAPS completa no Windows requer execucao nativa")
+
+
+# ─────────────────────────────────────────────────────────────────
+# GPP Credentials (Groups.xml cPassword)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_gpp_credentials():
+    """Busca credenciais GPP em SYSVOL (cPassword em Groups.xml / Services.xml)."""
+    _p("TITULO", "GPP CREDENTIALS (SYSVOL cPassword)")
+
+    sysvol_paths = []
+    if is_windows:
+        sysvol_paths = [r"C:\Windows\SYSVOL", r"\\localhost\SYSVOL", r"\\.\SYSVOL"]
+        # Tenta descobrir dominio para construir caminho UNC
+        out_dom, _ = _run("wmic computersystem get domain /value 2>nul")
+        if out_dom:
+            import re as _re_gpp
+            m = _re_gpp.search(r"Domain=(\S+)", out_dom)
+            if m and "." in m.group(1):
+                dom = m.group(1)
+                sysvol_paths.insert(0, f"\\\\{dom}\\SYSVOL\\{dom}\\Policies")
+    else:
+        sysvol_paths = ["/tmp/SYSVOL", "/mnt/sysvol", "/var/lib/samba/sysvol"]
+
+    gpp_files = ["Groups.xml", "Services.xml", "Scheduledtasks.xml",
+                 "DataSources.xml", "Printers.xml", "Drives.xml"]
+
+    found_any = False
+    for base in sysvol_paths:
+        for gfile in gpp_files:
+            if is_windows:
+                out, _ = _run(f'dir /s /b "{base}\\{gfile}" 2>nul')
+            else:
+                out, _ = _run(f'find "{base}" -name "{gfile}" 2>/dev/null')
+            if out and out.strip():
+                for fpath in out.strip().splitlines():
+                    fpath = fpath.strip()
+                    if not fpath:
+                        continue
+                    try:
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as fh:
+                            content = fh.read()
+                        import re as _re2
+                        cpw = _re2.findall(r'cpassword="([^"]+)"', content, _re2.IGNORECASE)
+                        if cpw:
+                            found_any = True
+                            for cp in cpw:
+                                _p("CRITICO", f"cPassword encontrado em {fpath}: {cp[:40]}...",
+                                   "Descriptografar: gpp-decrypt ou python3 gpp_decrypt.py"
+                                   " (AES-256-CBC, chave publica Microsoft)")
+                        else:
+                            _p("INFO", f"GPP file sem cPassword: {fpath}")
+                    except Exception as e:
+                        _p("INFO", f"Nao foi possivel ler {fpath}: {e}")
+
+    if not found_any:
+        _p("INFO", "Nenhum cPassword GPP encontrado (SYSVOL inacessivel ou patch MS14-025 aplicado)")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Active Directory - Verificacoes Locais
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_ad_local():
+    """Verifica indicadores AD locais: tickets Kerberos, DCs, dominios confiaveis, credenciais cached."""
+    _p("TITULO", "ACTIVE DIRECTORY - CHECKS LOCAIS")
+
+    if is_windows:
+        # Tickets Kerberos em cache (klist)
+        out_klist, _ = _run("klist 2>nul")
+        if out_klist and ("Ticket cache" in out_klist or "Cached Tickets" in out_klist):
+            _p("ALERTA", "Tickets Kerberos em cache encontrados",
+               "Use Mimikatz sekurlsa::tickets /export ou Rubeus dump /luid:<> para extrair")
+            # Conta quantos tickets
+            import re as _re3
+            tickets = _re3.findall(r"#\d+>", out_klist)
+            if tickets:
+                _p("INFO", f"{len(tickets)} ticket(s) Kerberos em cache")
+        else:
+            _p("INFO", "Nenhum ticket Kerberos em cache (ou klist nao disponivel)")
+
+        # Detectar Domain Controllers
+        out_dc, _ = _run("nltest /dclist: 2>nul")
+        if out_dc and ("DC[" in out_dc or "\\\\") :
+            _p("ALERTA", "Domain Controllers encontrados via nltest",
+               "Verifique permissoes: net user /domain, net group 'Domain Admins' /domain")
+            for line in out_dc.strip().splitlines()[:5]:
+                line = line.strip()
+                if line and "\\\\" in line:
+                    _p("INFO", f"DC detectado: {line.strip()}")
+
+        # Dominios confiaveis
+        out_trust, _ = _run("nltest /trusted_domains 2>nul")
+        if out_trust and "Status" not in out_trust and out_trust.strip():
+            import re as _re4
+            doms = _re4.findall(r"([\w\.\-]+\.[\w]+)\s", out_trust)
+            if doms:
+                _p("ALERTA", f"Dominios confiaveis detectados: {', '.join(set(doms)[:5])}",
+                   "Possiveis caminhos de escalada via cross-domain trust")
+
+        # Credenciais em cache (HKLM\SECURITY - requer SYSTEM)
+        out_cache, _ = _run(
+            r'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" '
+            r'/v CachedLogonsCount 2>nul')
+        if out_cache and "CachedLogonsCount" in out_cache:
+            import re as _re5
+            m = _re5.search(r"CachedLogonsCount\s+\w+\s+(\w+)", out_cache)
+            if m:
+                cnt = m.group(1)
+                if cnt not in ("0", "0x0"):
+                    _p("ALERTA", f"Credenciais cached habilitadas: CachedLogonsCount={cnt}",
+                       "Extrair com Mimikatz lsadump::cache ou Impacket secretsdump.py -sam -security")
+                else:
+                    _p("INFO", "CachedLogonsCount = 0 (credenciais cached desabilitadas)")
+
+        # Verifica se esta ingressado em dominio
+        out_dom2, _ = _run("wmic computersystem get PartOfDomain /value 2>nul")
+        if out_dom2 and "TRUE" in out_dom2.upper():
+            out_dn, _ = _run("wmic computersystem get domain /value 2>nul")
+            import re as _re6
+            m2 = _re6.search(r"Domain=(\S+)", out_dn or "")
+            dom_name = m2.group(1) if m2 else "desconhecido"
+            _p("ALERTA", f"Maquina ingressada no dominio: {dom_name}",
+               "Ataques AD disponiveis: Kerberoasting, ASREPRoasting, BloodHound, DCSync")
+    else:
+        # Linux domain-joined (SSSD, winbind, realm)
+        out_realm, _ = _run("realm list 2>/dev/null")
+        if out_realm and out_realm.strip():
+            _p("ALERTA", "Maquina Linux ingressada em dominio AD (realm list)",
+               "Usar impacket ou bloodhound-python com credenciais para enumerar AD")
+
+        out_klist_l, _ = _run("klist 2>/dev/null")
+        if out_klist_l and "Credentials cache" in out_klist_l:
+            _p("ALERTA", "Tickets Kerberos em cache no Linux",
+               "Usar impacket ticketConverter para converter ccache em kirbi")
+
+        out_wb, _ = _run("wbinfo --own-domain 2>/dev/null")
+        if out_wb and out_wb.strip() and "WORKGROUP" not in out_wb.upper():
+            _p("ALERTA", f"Winbind dominio: {out_wb.strip()}",
+               "net ads status, wbinfo -u para enumerar usuarios do dominio")
+
+        # Credenciais AD em /etc/krb5.keytab
+        if os.path.exists("/etc/krb5.keytab"):
+            _p("CRITICO", "Arquivo /etc/krb5.keytab acessivel!",
+               "klist -k /etc/krb5.keytab para listar principals; usar para autenticar no AD")
+
+
+# ─────────────────────────────────────────────────────────────────
 # CVE-2021-4034 PwnKit (pkexec)
 # ─────────────────────────────────────────────────────────────────
 
@@ -1382,13 +1583,20 @@ def main():
                    help="Cloud IMDS — AWS 169.254.169.254, Azure, GCP metadata")
     p.add_argument("--wsl", action="store_true",
                    help="WSL escape — /proc/version, /mnt/c, interop, exe Windows")
+    p.add_argument("--laps", action="store_true",
+                   help="LAPS — registro AdmPwd, AdmPwd.dll, modulo PowerShell")
+    p.add_argument("--gpp", action="store_true",
+                   help="GPP Credentials — SYSVOL Groups.xml/Services.xml cPassword")
+    p.add_argument("--ad", action="store_true",
+                   help="AD local — tickets Kerberos, DCs, dominios confiaveis, credenciais cached")
     p.add_argument("--output", metavar="FILE", help="Salvar relatorio em JSON")
     p.add_argument("--html", metavar="FILE", help="Salvar relatorio em HTML (dark theme)")
     args = p.parse_args()
 
     novos_flags = [args.windows, args.pkexec, args.lib_hijack, args.sudo_token,
                    args.monitor, args.dbus, args.exploits,
-                   args.docker, args.k8s, args.imds, args.wsl]
+                   args.docker, args.k8s, args.imds, args.wsl,
+                   args.laps, args.gpp, args.ad]
     linux_flags = [args.sistema, args.kernel, args.sudo, args.suid, args.caps,
                    args.cron, args.servicos, args.path, args.nfs, args.senhas,
                    args.containers, args.graveis, args.env, args.processos,
@@ -1452,8 +1660,22 @@ def main():
             verificar_wsl()
         if args.monitor:
             monitorar_processos()
+        if executar_tudo or args.laps:
+            verificar_laps()
+        if executar_tudo or args.gpp:
+            verificar_gpp_credentials()
+        if executar_tudo or args.ad:
+            verificar_ad_local()
         if args.windows:
             _p("INFO", "Flag --windows ignorado em Linux")
+
+    if is_windows:
+        if executar_tudo or args.laps:
+            verificar_laps()
+        if executar_tudo or args.gpp:
+            verificar_gpp_credentials()
+        if executar_tudo or args.ad:
+            verificar_ad_local()
 
     gerar_relatorio(args.output)
     if hasattr(args, "html") and args.html:
