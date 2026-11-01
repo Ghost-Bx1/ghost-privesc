@@ -34,6 +34,9 @@ C = {
     "X": "\033[0m",
 }
 
+VERSAO = "2.0.0"
+
+
 def _build_banner():
     import re as _re
     G = "\033[92m"; Cy = "\033[96m"; D = "\033[2m"; N = "\033[1m"
@@ -1779,11 +1782,9 @@ def gerar_relatorio(saida_json=None):
 def main():
     is_windows = sys.platform == "win32"
 
-    print(BANNER)
-
     p = argparse.ArgumentParser(
         prog="ghost-privesc",
-        description="Ghost-Privesc v2.2.0 - Linux & Windows Privilege Escalation Checker | By Gh0st-Bx1",
+        description=f"Ghost-Privesc v{VERSAO} - Linux & Windows Privilege Escalation Checker | By Gh0st-Bx1",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     p.add_argument("--completo", action="store_true", help="Executar todos os modulos")
@@ -1845,7 +1846,11 @@ def main():
                    help="DPAPI — locais de Master Keys, Credentials, Vault (Windows)")
     p.add_argument("--output", metavar="FILE", help="Salvar relatorio em JSON")
     p.add_argument("--html", metavar="FILE", help="Salvar relatorio em HTML (dark theme)")
+    p.add_argument("--no-banner", action="store_true", help="Suprimir banner")
     args = p.parse_args()
+
+    if not getattr(args, "no_banner", False):
+        print(BANNER)
 
     novos_flags = [args.windows, args.pkexec, args.lib_hijack, args.sudo_token,
                    args.monitor, args.dbus, args.exploits,
