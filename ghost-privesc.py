@@ -34,7 +34,7 @@ C = {
     "X": "\033[0m",
 }
 
-VERSAO = "2.0.0"
+VERSAO = "2.1.0"
 
 
 def _build_banner():
@@ -276,6 +276,23 @@ def verificar_sudo():
                        f"Ref: https://gtfobins.github.io/gtfobins/{bin_}/#sudo")
     elif saida:
         _p("MEDIO", "Usuario tem permissoes sudo (requer senha)", saida[:300])
+
+    # Wildcard sudo entries
+    for linha in saida.splitlines():
+        partes = linha.strip().split()
+        for i, p in enumerate(partes):
+            if p.endswith("*") and i > 0:
+                _p("ALTO", f"Wildcard sudo detectado: {linha.strip()}",
+                   "Wildcards em sudo podem ser explorados via argument injection (ex: tar --checkpoint-action)")
+                break
+
+    # LD_PRELOAD via env_keep
+    if "LD_PRELOAD" in saida and ("env_keep" in saida or "SETENV" in saida):
+        _p("CRITICO", "sudo env_keep permite LD_PRELOAD — LD_PRELOAD privesc via sudo",
+           "1. gcc -shared -fPIC -o /tmp/evil.so evil.c\n2. sudo LD_PRELOAD=/tmp/evil.so <cmd>")
+    elif "env_reset" not in saida and "LD_PRELOAD" in os.environ:
+        _p("ALTO", "sudo sem env_reset e LD_PRELOAD definido no ambiente",
+           "sudo LD_PRELOAD=/tmp/evil.so <permitted_cmd>")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1267,6 +1284,21 @@ def verificar_lib_hijacking():
                 _p("CRITICO", f"Diretorio ld.so gravavel: {d}",
                    "Coloque uma .so maliciosa e execute ldconfig para hijack global")
 
+    # /etc/ld.so.conf.d/ conf files writable
+    conf_dir = "/etc/ld.so.conf.d"
+    if os.path.isdir(conf_dir):
+        try:
+            for fname in os.listdir(conf_dir):
+                fpath = os.path.join(conf_dir, fname)
+                if os.access(fpath, os.W_OK):
+                    _p("CRITICO", f"Arquivo ldconfig gravavel: {fpath}",
+                       "Adicione um caminho gravavel ao arquivo e execute ldconfig para hijack de bibliotecas")
+        except OSError:
+            pass
+        if os.access(conf_dir, os.W_OK):
+            _p("CRITICO", f"Diretorio {conf_dir} gravavel — crie um .conf apontando para /tmp",
+               "echo '/tmp' > /etc/ld.so.conf.d/evil.conf && ldconfig")
+
     # SUID binarios com dependencias gravieis
     out_suid, _ = _run("find / -perm -4000 -type f 2>/dev/null", timeout=15)
     if out_suid:
@@ -1314,26 +1346,92 @@ def verificar_sudo_token():
 # Monitoramento de Processos (pspy-like)
 # ─────────────────────────────────────────────────────────────────
 
-def monitorar_processos(duracao=15):
-    """Monitora processos novos por 'duracao' segundos (similar ao pspy)."""
+def monitorar_processos(duracao=60):
+    """Monitora processos novos por 'duracao' segundos lendo /proc diretamente (pspy-like)."""
     import time
     _p("TITULO", f"MONITOR DE PROCESSOS ({duracao}s) — pspy-like")
-    visto = set()
+    visto = {}  # pid -> cmdline snapshot
     inicio = time.time()
-    _p("INFO", f"Monitorando por {duracao}s. Processos novos serao exibidos...")
+    _p("INFO", f"Monitorando /proc por {duracao}s a cada 2s. Processos novos serao exibidos...")
     while time.time() - inicio < duracao:
-        out, _ = _run("ps -eo pid,user,args --no-headers 2>/dev/null", timeout=3)
-        if out:
-            for linha in out.splitlines():
-                pid = linha.strip().split()[0] if linha.strip() else ""
-                if pid not in visto:
-                    visto.add(pid)
-                    partes = linha.split(None, 2)
-                    if len(partes) >= 3 and partes[1] == "root" and pid not in ["1", "2"]:
-                        cmd = partes[2][:100]
-                        _p("ALERTA", f"Novo processo root: PID={pid} CMD={cmd}")
-        time.sleep(1)
-    _p("INFO", f"Monitoramento concluido. {len(visto)} processos totais observados")
+        try:
+            pids = [d for d in os.listdir("/proc") if d.isdigit()]
+        except OSError:
+            break
+        for pid in pids:
+            if pid in visto:
+                continue
+            try:
+                # read cmdline
+                with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                    raw = fh.read(512)
+                cmd = raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+                if not cmd:
+                    continue
+                # read owner
+                stat_path = f"/proc/{pid}/status"
+                uid = "?"
+                try:
+                    with open(stat_path) as sf:
+                        for line in sf:
+                            if line.startswith("Uid:"):
+                                uid = line.split()[1]
+                                break
+                except OSError:
+                    pass
+                visto[pid] = cmd
+                if uid == "0" and pid not in ("1", "2"):
+                    _p("ALERTA", f"Novo proc root: PID={pid} UID={uid} CMD={cmd[:120]}")
+                elif uid not in ("0",) and any(k in cmd for k in ["passwd", "shadow", "id_rsa", "aws", "cred"]):
+                    _p("MEDIO", f"Proc sensivel: PID={pid} UID={uid} CMD={cmd[:120]}")
+            except OSError:
+                pass
+        time.sleep(2)
+    _p("INFO", f"Monitoramento concluido. {len(visto)} processos observados no total")
+
+
+# ─────────────────────────────────────────────────────────────────
+# /proc/*/environ leakage (other UIDs)
+# ─────────────────────────────────────────────────────────────────
+
+def verificar_proc_environ():
+    """Tenta ler /proc/<pid>/environ de processos de outros UIDs para vazar segredos."""
+    _p("TITULO", "/proc/*/environ LEITURA (outros UIDs)")
+    meu_uid = str(os.getuid()) if hasattr(os, "getuid") else None
+    sensiveis = ["PASSWORD", "PASS", "SECRET", "TOKEN", "API_KEY", "AWS_", "GITHUB_",
+                 "PRIVATE_KEY", "DB_PASS", "MYSQL_", "POSTGRES_", "REDIS_PASS"]
+    achados = 0
+    try:
+        pids = [d for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        _p("INFO", "/proc nao acessivel")
+        return
+    for pid in pids:
+        env_path = f"/proc/{pid}/environ"
+        try:
+            # check owner via status
+            uid = None
+            with open(f"/proc/{pid}/status") as sf:
+                for line in sf:
+                    if line.startswith("Uid:"):
+                        uid = line.split()[1]
+                        break
+            if meu_uid and uid == meu_uid:
+                continue
+            with open(env_path, "rb") as ef:
+                raw = ef.read(4096)
+            env_str = raw.replace(b"\x00", b"\n").decode("utf-8", errors="replace")
+            for var in sensiveis:
+                for linha in env_str.splitlines():
+                    if var in linha:
+                        _p("CRITICO", f"/proc/{pid}/environ legivel (UID={uid}): {linha[:120]}",
+                           "Processo de outro usuario expoe credenciais via /proc")
+                        achados += 1
+                        break
+        except (OSError, PermissionError):
+            pass
+    if achados == 0:
+        _p("OK", "Nenhum /proc/<pid>/environ de outro UID legivel com dados sensiveis")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1814,7 +1912,9 @@ def main():
     p.add_argument("--sudo-token", dest="sudo_token", action="store_true",
                    help="Sudo token reuse via ptrace (sudo_inject)")
     p.add_argument("--monitor", action="store_true",
-                   help="Monitorar novos processos por 15s (pspy-like)")
+                   help="Monitorar novos processos por 60s via /proc (pspy-like)")
+    p.add_argument("--proc-environ", action="store_true", dest="proc_environ",
+                   help="Tentar ler /proc/<pid>/environ de outros UIDs (vazar credenciais)")
     p.add_argument("--dbus", action="store_true",
                    help="Enumerar servicos D-Bus perigosos")
     p.add_argument("--exploits", action="store_true",
@@ -1919,6 +2019,8 @@ def main():
             verificar_sudo_token()
         if executar_tudo or args.dbus:
             verificar_dbus()
+        if executar_tudo or args.proc_environ:
+            verificar_proc_environ()
         if executar_tudo or args.exploits:
             sugerir_exploits()
         if executar_tudo or args.docker:
