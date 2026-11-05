@@ -144,6 +144,28 @@ python3 ghost-privesc.py --completo --output report.json
 
 ---
 
+## Roadmap
+
+Improvements planned based on analysis of LinPEAS, linuxprivchecker and pspy:
+
+| Priority | Feature | Description |
+|----------|---------|-------------|
+| High | Process monitor (pspy-style) | Poll `/proc/*/cmdline` every 2s for 60s, log root processes not seen before - catches scheduled root scripts invisible to `cron -l` |
+| High | LD_PRELOAD in sudo env_keep | Parse `sudo -l` for `env_keep += LD_PRELOAD`; if found with NOPASSWD: instant privesc via preloaded .so |
+| High | Writable /etc/ld.so.conf.d/ | If directory or any .conf is writable: add path to `/tmp` for shared library injection on next ldconfig |
+| High | Wildcard sudo entries | Detect `sudo /bin/tar *`, `sudo /usr/bin/vim /var/log/*` - wildcard allows flag injection like `--checkpoint-action=exec=` |
+| High | Readable /proc/*/environ for other users | Iterate `/proc/*/environ` for processes of other UIDs; may contain tokens, passwords, AWS keys |
+| High | LXD group membership | Detect `lxd` in `id` output; create privileged container mounting host `/` - no password needed |
+| Medium | Writable Python site-packages | Detect site-packages dirs writable by current user; `.pth` injection gives code exec on any Python invocation (including root crons) |
+| Medium | ACL misconfiguration (`getfacl`) | Check POSIX ACLs on `/etc/shadow`, `/etc/sudoers`, `/root` - ACEs invisible to standard `ls -la` |
+| Medium | Writable SSH authorized_keys | Check `~<user>/.ssh/authorized_keys` writability for all non-root users |
+| Medium | restic `--password-command` in sudo | Detect `sudo /usr/bin/restic`; `--password-command=id` runs arbitrary command as root |
+| Medium | eBPF program inventory | Parse `/proc/*/maps` for `bpf-prog` entries; unexpected eBPF programs may indicate rootkits |
+| Medium | Writable cron drop directory | Check if `/etc/cron.d/`, `cron.hourly/`, `cron.daily/` are writable - drop new file = new root cron |
+| Low | CVE-2025-39964 (AF_ALG) | kernel < 6.14.3: use-after-free in AF_ALG socket; check kernel version + `/proc/config.gz` |
+| Low | Firmware analysis mode | `--firmware /path`: scan extracted FS for SUID binaries, world-writable paths, hardcoded passwords |
+| Low | Color output + HTML export | ANSI color in terminal, optional `--output-format html` for browser report with severity badges |
+
 ## Disclaimer
 
 For use in authorized environments only. Penetration testing, CTF competitions, and offensive security research with explicit permission from the environment owner. The author is not responsible for misuse.
