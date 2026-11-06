@@ -10,6 +10,7 @@
 ![Python](https://img.shields.io/badge/Python-3.6%2B-blue?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Linux-yellow?style=flat-square)
 ![Category](https://img.shields.io/badge/Category-Privilege%20Escalation-red?style=flat-square)
+![By Gh0st-Bx1](https://img.shields.io/badge/By-Gh0st--Bx1-black?style=flat-square&logo=github)
 
 ---
 

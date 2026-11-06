@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Ghost-Privesc - Linux Privilege Escalation Checker
 By Gh0st-Bx1 | github.com/Ghost-Bx1
