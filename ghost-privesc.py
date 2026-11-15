@@ -1880,10 +1880,70 @@ def gerar_relatorio(saida_json=None):
 def main():
     is_windows = sys.platform == "win32"
 
+    _PRIVESC_HELP = """\033[92mModulos Linux:\033[0m
+  \033[1m--sistema\033[0m          Informacoes do sistema (kernel, distro, arch)
+  \033[1m--kernel\033[0m           Verificar CVEs de kernel exploitaveis
+  \033[1m--sudo\033[0m             Analisar sudo -l e GTFOBins
+  \033[1m--suid\033[0m             Buscar binarios SUID/SGID e GTFOBins
+  \033[1m--caps\033[0m             Verificar Linux capabilities perigosas
+  \033[1m--cron\033[0m             Analisar cron jobs e scripts editaveis
+  \033[1m--servicos\033[0m         Verificar unit files de servicos graveiveis
+  \033[1m--path\033[0m             Deteccao de PATH hijacking
+  \033[1m--nfs\033[0m              NFS no_root_squash (escalada via montagem)
+  \033[1m--containers\033[0m       Docker/LXD escape (grupo docker, privileged)
+  \033[1m--lib-hijack\033[0m       Library hijacking via LD_PRELOAD/LD_LIBRARY_PATH
+  \033[1m--sudo-token\033[0m       Reutilizacao de token sudo (CVE-2019-14287 style)
+  \033[1m--proc-environ\033[0m     Leitura de /proc/*/environ para credenciais
+  \033[1m--dbus\033[0m             Verificar endpoints D-Bus exploitaveis
+  \033[1m--pkexec\033[0m           Checar CVE-2021-4034 (Polkit pkexec)
+
+\033[92mModulos Windows:\033[0m
+  \033[1m--windows\033[0m          Coleta completa de informacoes Windows
+  \033[1m--token-privs\033[0m      Verificar SeImpersonatePrivilege e similares
+  \033[1m--dll-hijack\033[0m       Deteccao de DLL hijacking em servicos
+  \033[1m--schtasks\033[0m         Tarefas agendadas com binarios editaveis
+  \033[1m--autoruns\033[0m         Entradas de autorun em registro/startup
+  \033[1m--dpapi\033[0m            Extrai credenciais DPAPI (Chrome, WiFi, etc)
+  \033[1m--laps\033[0m             Verifica LAPS e senhas de admin local
+  \033[1m--gpp\033[0m              GPP/cPassword em SYSVOL (MS14-025)
+  \033[1m--ad\033[0m               Checar permissoes AD exploitaveis (ACLs)
+
+\033[92mModulos Cloud/Container:\033[0m
+  \033[1m--docker\033[0m           Verificar escape de Docker (socket, privileged)
+  \033[1m--k8s\033[0m              Verificar escape de Kubernetes (serviceaccount)
+  \033[1m--imds\033[0m             Verificar IMDS (AWS/GCP/Azure) por credenciais
+  \033[1m--wsl\033[0m              WSL para escalada (interop, montagens)
+
+\033[92mModulos Gerais:\033[0m
+  \033[1m--senhas\033[0m           Credenciais em arquivos (.env, config, history)
+  \033[1m--graveis\033[0m          Arquivos criticos com permissao de escrita
+  \033[1m--env\033[0m              Variaveis de ambiente suspeitas
+  \033[1m--processos\033[0m        Processos rodando como root/SYSTEM
+  \033[1m--portas\033[0m           Portas internas (localhost only) em escuta
+  \033[1m--usuarios\033[0m         Usuarios com UIDs suspeitos (0, >1000)
+  \033[1m--exploits\033[0m         Sugestao de exploits baseada no kernel/versao
+  \033[1m--monitor\033[0m          Monitoramento continuo de mudancas de privilegio
+  \033[1m--completo\033[0m         Executar TODOS os modulos
+
+\033[92mOpcoes de Output:\033[0m
+  \033[1m--output\033[0m           Salvar relatorio em JSON
+  \033[1m--html\033[0m             Salvar relatorio em HTML (dark theme)
+  \033[1m--no-banner\033[0m        Suprimir banner
+
+\033[92mExemplos:\033[0m
+  python ghost-privesc.py --completo
+  python ghost-privesc.py --sudo --suid --cron --caps
+  python ghost-privesc.py --kernel --exploits --output privesc.json
+  python ghost-privesc.py --docker --k8s --imds
+  python ghost-privesc.py --completo --html relatorio.html
+
+\033[2mUse: python ghost-privesc.py --help  para ver todos os flags disponiveis\033[0m
+"""
     p = argparse.ArgumentParser(
         prog="ghost-privesc",
-        description=f"Ghost-Privesc v{VERSAO} - Linux & Windows Privilege Escalation Checker | By Gh0st-Bx1",
-        formatter_class=argparse.RawTextHelpFormatter,
+        description=f"Ghost-Privesc v{VERSAO} - Linux & Windows Privilege Escalation Checker  |  By Gh0st-Bx1",
+        epilog=_PRIVESC_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--completo", action="store_true", help="Executar todos os modulos")
     p.add_argument("--sistema", action="store_true", help="Informacoes do sistema (Linux)")
